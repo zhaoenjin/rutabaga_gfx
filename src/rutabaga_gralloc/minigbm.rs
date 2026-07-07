@@ -14,6 +14,8 @@ use std::io::Seek;
 use std::io::SeekFrom;
 use std::os::fd::FromRawFd;
 use std::sync::Arc;
+use std::fs::OpenOptions;
+use std::os::fd::AsRawFd;
 
 use magma_gpu::util::Error as MagmaGpuError;
 use magma_gpu::util::FromRawDescriptor;
@@ -63,21 +65,24 @@ impl MinigbmDevice {
     /// Returns a new `MinigbmDevice` if there is a rendernode in `/dev/dri/` that is accepted by
     /// the minigbm library.
     pub fn init() -> RutabagaResult<Box<dyn Gralloc>> {
-        let descriptor: File;
+        let descriptor = Self::open_render_node()?;
         let gbm: *mut gbm_device;
         // SAFETY:
         // Safe because minigbm_create_default_device is safe to call with an unused fd,
         // and fd is guaranteed to be overwritten with a valid descriptor when a non-null
         // pointer is returned.
         unsafe {
-            let mut fd = -1;
-
-            gbm = minigbm_create_default_device(&mut fd);
+            gbm = gbm_create_device(descriptor.as_raw_fd());
             if gbm.is_null() {
+                log::error!(
+                    "MinigbmDevice::init: gbm_create_device failed: {}",
+                    Error::last_os_error()
+                );
                 return Err(MagmaGpuError::IoError(Error::last_os_error()).into());
             }
-            descriptor = File::from_raw_fd(fd);
         }
+
+        log::error!("MinigbmDevice::init: gbm device created successfully");
 
         Ok(Box::new(MinigbmDevice {
             minigbm_device: Arc::new(MinigbmDeviceInner {
@@ -86,6 +91,48 @@ impl MinigbmDevice {
             }),
             last_buffer: None,
         }))
+    }
+
+    /// Opens the first usable DRM node under `/dev/dri/`.
+    ///
+    /// Prefers a render node (`renderD128`..`renderD191`); if none are available
+    /// (e.g. the platform only exposes a primary node), falls back to `card0`.
+    fn open_render_node() -> RutabagaResult<File> {
+        for minor in 128..192 {
+            let path = format!("/dev/dri/renderD{}", minor);
+            match OpenOptions::new().read(true).write(true).open(&path) {
+                Ok(file) => {
+                    log::error!("MinigbmDevice::open_render_node: opened {}", path);
+                    return Ok(file);
+                }
+                Err(e) => {
+                    log::error!(
+                        "MinigbmDevice::open_render_node: failed to open {}: {}",
+                        path,
+                        e
+                    );
+                }
+            }
+        }
+
+        let card_path = "/dev/dri/card0";
+        match OpenOptions::new().read(true).write(true).open(card_path) {
+            Ok(file) => {
+                log::error!(
+                    "MinigbmDevice::open_render_node: no render node found, fell back to {}",
+                    card_path
+                );
+                Ok(file)
+            }
+            Err(e) => {
+                log::error!(
+                    "MinigbmDevice::open_render_node: failed to open fallback {}: {}",
+                    card_path,
+                    e
+                );
+                Err(MagmaGpuError::IoError(e).into())
+            }
+        }
     }
 }
 
@@ -263,8 +310,9 @@ impl MinigbmBuffer {
     pub fn cached(&self) -> bool {
         // SAFETY:
         // This is always safe to call with a valid gbm_bo pointer.
-        let mode = unsafe { gbm_bo_get_map_info(self.bo) };
-        mode == gbm_bo_map_cache_mode::GBM_BO_MAP_CACHE_CACHED
+        // let mode = unsafe { gbm_bo_get_map_info(self.bo) };
+        // mode == gbm_bo_map_cache_mode::GBM_BO_MAP_CACHE_CACHED
+        false
     }
 
     /// Exports a new dmabuf/prime file descriptor.

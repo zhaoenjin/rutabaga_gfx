@@ -35,7 +35,7 @@ rust_global_args = [
 ]
 
 if with_gbm
-  error('rutabaga_gfx does not work with upstream gbm yet')
+  #error('rutabaga_gfx does not work with upstream gbm yet')
   dep_gbm = dependency('gbm', version: '>= 21.1.1')
   rutabaga_args += ['--cfg', 'feature="gbm"']
   dep_rutabaga_gfx += dep_gbm
