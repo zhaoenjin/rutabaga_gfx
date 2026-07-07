@@ -64,6 +64,27 @@ const RUTABAGA_WSI_SURFACELESS: u64 = 1;
 
 static S_DEBUG_HANDLER: OnceLock<Mutex<RutabagaDebugHandler>> = OnceLock::new();
 
+/// A custom logger that bridges Rust's `log` crate to the RutabagaDebugHandler,
+/// so that `log::error!()` calls in internal library code are forwarded to the C-side callback.
+struct RutabagaLogger;
+
+impl log::Log for RutabagaLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::Level::Error
+    }
+
+    fn log(&self, record: &log::Record) {
+        if self.enabled(record.metadata()) {
+            let msg = format!("[{}] {}", record.target(), record.args());
+            log_error(msg);
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+static LOGGER: RutabagaLogger = RutabagaLogger;
+
 fn log_error(debug_string: String) {
     if let Some(handler_mutex) = S_DEBUG_HANDLER.get() {
         let cstring = CString::new(debug_string.as_str()).expect("CString creation failed");
@@ -227,6 +248,11 @@ pub unsafe extern "C" fn rutabaga_init(builder: &rutabaga_builder, ptr: &mut *mu
             let debug_handler = create_ffi_debug_handler(builder.user_data, func);
             let _ = S_DEBUG_HANDLER.set(Mutex::new(debug_handler.clone()));
             debug_handler_opt = Some(debug_handler);
+
+            // Register the log backend so that log::error!() in library code
+            // is forwarded to the C-side debug callback.
+            let _ = log::set_logger(&LOGGER);
+            log::set_max_level(log::LevelFilter::Error);
         }
 
         let mut rutabaga_paths_opt = None;
