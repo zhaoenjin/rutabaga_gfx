@@ -982,8 +982,22 @@ impl Rutabaga {
         }
 
         let resource = match context {
-            Some(ctx) => ctx.context_create_blob(resource_id, resource_create_blob, handle)?,
+            Some(ctx) => {
+                if resource_create_blob.blob_id > 0 {
+                    ctx.context_create_blob(resource_id, resource_create_blob, handle)?
+                } else {
+                    let cross_domain = self
+                        .components
+                        .get_mut(&RutabagaComponentType::CrossDomain)
+                        .ok_or(RutabagaError::InvalidComponent)?;
+                    cross_domain.create_blob(ctx_id, resource_id, resource_create_blob, iovecs, handle)?
+                }
+            }
             None => {
+                let component = self
+                    .components
+                    .get_mut(&self.default_component)
+                    .ok_or(RutabagaError::InvalidComponent)?;
                 component.create_blob(ctx_id, resource_id, resource_create_blob, iovecs, handle)?
             }
         };
