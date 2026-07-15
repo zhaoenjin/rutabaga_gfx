@@ -151,16 +151,27 @@ impl Gralloc for MinigbmDevice {
     ) -> RutabagaResult<ImageMemoryRequirements> {
         // TODO(b/315870313): Add safety comment
         #[allow(clippy::undocumented_unsafe_blocks)]
+        let flags_no_tex = info.flags.0 & !GBM_BO_USE_TEXTURING;
         let bo = unsafe {
             gbm_bo_create(
                 self.minigbm_device.gbm,
                 info.width,
                 info.height,
                 info.drm_format.0,
-                info.flags.0,
+                flags_no_tex,
             )
         };
         if bo.is_null() {
+            log::error!(
+                "MinigbmDevice::get_image_memory_requirements: gbm_bo_create failed: {}",
+                Error::last_os_error()
+            );
+
+            log::error!(
+                "gbm_bo_create failed: w={} h={} fmt=0x{:x} flags=0x{:x}: {}",
+                info.width, info.height, info.drm_format.0, flags_no_tex,
+                Error::last_os_error()
+            );
             return Err(MagmaGpuError::IoError(Error::last_os_error()).into());
         }
 
